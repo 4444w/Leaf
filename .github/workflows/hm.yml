@@ -19,12 +19,15 @@ jobs:
         
       - name: Initialize OHPM and Configure Registry
         run: |
-          # 1. 绕过 ohpm 初始化检查（创建标记文件）
+          # 1. 创建 ohpm 目录和初始化标记文件，骗过初始化检查
           mkdir -p $HOME/.ohpm
           echo "initialized" > $HOME/.ohpm/.ohpm_init_flag
           
-          # 2. 核心修复：在项目根目录生成 .ohpmrc 文件，强制指定商业版仓库
-          # 这样无论 ohpm 去哪找配置，都会以项目目录下的为准
+          # 2. 关键修复：必须在用户目录下创建 ohpmrc 文件，否则 ohpm 认为未初始化
+          echo "registry=https://ohpm.harmonyos.cn/ohpm/" > $HOME/.ohpm/ohpmrc
+          echo "@ohos:registry=https://ohpm.harmonyos.cn/ohpm/" >> $HOME/.ohpm/ohpmrc
+          
+          # 3. 同时在项目根目录下也创建一份 .ohpmrc，确保优先级最高，解决 404 问题
           echo "registry=https://ohpm.harmonyos.cn/ohpm/" > .ohpmrc
           echo "@ohos:registry=https://ohpm.harmonyos.cn/ohpm/" >> .ohpmrc
           
