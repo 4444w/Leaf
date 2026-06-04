@@ -5,5 +5,8 @@
   "main": "",
   "author": "Leaf",
   "license": "MIT",
-  "dependencies": {}
+  "dependencies": {
+    "@ohos/hvigor-ohos-plugin": "^4.1.0",
+    "@ohos/hvigor": "^4.1.0"
+  }
 }

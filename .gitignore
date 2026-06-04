@@ -5,7 +5,6 @@ build/
 .hvigor/
 .cxx/
 .gradle/
-local.properties
 *.hap
 *.app
 *.so

@@ -1,21 +1,18 @@
-# ═══════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════
 #  Leaf Browser — HarmonyOS NEXT HAP 自动构建工作流
-# ═══════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════
 #
-#  使用方式：
-#  1. 将项目推送到 GitHub
-#  2. 进入仓库 Settings → Secrets → 添加以下变量（可选）：
-#     - OHOS_CERT_P12    : 华为开发者签名证书 base64
-#     - OHOS_CERT_PASS   : 证书密码
-#     - OHOS_PROFILE     :  Provision Profile base64
-#  3. 推送代码或手动触发构建
-#  4. 在 Actions 页面下载 HAP artifact
+#  核心流程：
+#  1. 下载 OpenHarmony SDK（公开镜像，无需账号）
+#  2. 下载 ohpm 包管理器 CLI
+#  3. 安装依赖 → 构建 HAP
+#  4. 上传 HAP artifact
 #
-#  注意：
-#  - HarmonyOS SDK 需要华为开发者账号授权
-#  - 如果 CI 环境无法下载 SDK，请使用 DevEco Studio 本地构建
-#  - 未签名 HAP 需要手机开启开发者模式才能安装
-# ═══════════════════════════════════════════════════════════
+#  可选 Secrets（签名用）：
+#  - OHOS_CERT_P12  : 华为开发者签名证书 base64
+#  - OHOS_CERT_PASS : 证书密码
+#  - OHOS_PROFILE   : Provision Profile base64
+# ═══════════════════════════════════════════════════════════════════
 
 name: Build HAP
 
@@ -34,12 +31,15 @@ on:
           - release
 
 env:
-  OHOS_SDK_URL: 'https://developer.huawei.com/ohos/sdk'
-  HVIGOR_VERSION: '4.1.0'
   NODE_VERSION: '18'
+  # OpenHarmony SDK 版本（对应 HarmonyOS NEXT API 13）
+  OHOS_SDK_VER: '5.0.3.403'
+  # ohpm CLI 版本
+  OHPM_VER: '5.0.3'
+  # hvigor 版本
+  HVIGOR_VER: '4.1.0'
 
 jobs:
-  # ─── 构建 HAP ──────────────────────────────
   build-hap:
     runs-on: ubuntu-latest
     permissions:
@@ -47,144 +47,268 @@ jobs:
       actions: write
 
     steps:
-      # ── 1. 检出代码 ──
+      # ═══ 1. 检出代码 ═══
       - name: 📥 Checkout repository
         uses: actions/checkout@v4
 
-      # ── 2. 配置 Node.js ──
+      # ═══ 2. 配置 Node.js ═══
       - name: 🟢 Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
 
-      # ── 3. 缓存 oh_modules ──
-      - name: 💾 Cache oh_modules
+      # ═══ 3. 缓存 SDK ═══
+      - name: 💾 Cache OpenHarmony SDK
         uses: actions/cache@v4
+        id: cache-sdk
         with:
           path: |
-            oh_modules
-            entry/oh_modules
-          key: ohos-oh_modules-${{ hashFiles('oh-package.json5', 'entry/oh-package.json5') }}
+            ~/ohos-sdk
+            ~/ohpm-cli
+          key: ohos-sdk-${{ env.OHOS_SDK_VER }}-ohpm${{ env.OHPM_VER }}
           restore-keys: |
-            ohos-oh_modules-
+            ohos-sdk-
 
-      # ── 4. 下载 OpenHarmony 命令行工具 ──
-      - name: 🔧 Install OpenHarmony CLI tools
+      # ═══ 4. 下载 OpenHarmony SDK ═══
+      - name: 📦 Download OpenHarmony SDK
+        if: steps.cache-sdk.outputs.cache-hit != 'true'
         run: |
-          echo "==> Installing ohpm & hvigor ..."
-          npm install -g @ohos/hvigor@${{ env.HVIGOR_VERSION }} 2>/dev/null || true
-          npm install -g @ohos/ohpm@1.3.0 2>/dev/null || true
+          echo "==> Downloading OpenHarmony SDK ${{ env.OHOS_SDK_VER }} ..."
+          mkdir -p $HOME/ohos-sdk
 
-          echo "==> Checking tools ..."
-          npx hvigor --version 2>/dev/null || echo "hvigor not yet available"
-          which ohpm 2>/dev/null || echo "ohpm CLI not yet available"
+          # 方法1：华为云镜像（公开，无需账号）
+          SDK_URL="https://repo.huaweicloud.com/openharmony/sdk/${{ env.OHOS_SDK_VER }}/ohos-sdk-linux-${{ env.OHOS_SDK_VER }}.zip"
+          echo "Trying: $SDK_URL"
+          wget -q --timeout=60 --tries=3 "$SDK_URL" -O /tmp/ohos-sdk.zip && {
+            echo "✅ Downloaded from Huawei mirror"
+            unzip -q /tmp/ohos-sdk.zip -d $HOME/ohos-sdk
+          } || {
+            echo "⚠️ Huawei mirror failed, trying OpenHarmony gitee release ..."
+            # 方法2：OpenHarmony 官方 gitee release
+            ALT_URL="https://gitee.com/openharmony/docs/releases/download/${{ env.OHOS_SDK_VER }}/ohos-sdk-linux-${{ env.OHOS_SDK_VER }}.zip"
+            echo "Trying: $ALT_URL"
+            wget -q --timeout=60 --tries=3 "$ALT_URL" -O /tmp/ohos-sdk.zip && {
+              echo "✅ Downloaded from gitee"
+              unzip -q /tmp/ohos-sdk.zip -d $HOME/ohos-sdk
+            } || {
+              echo "⚠️ Both mirrors failed, trying npm @ohos/sdk ..."
+              # 方法3：通过 npm 安装 SDK 片段
+              mkdir -p $HOME/ohos-sdk/ets && mkdir -p $HOME/ohos-sdk/native
+              npm pack @ohos/sdk@${{ env.OHOS_SDK_VER }} 2>/dev/null || true
+            }
+          }
 
-      # ── 5. 安装项目依赖 ──
-      - name: 📦 Install dependencies
+          # 列出下载的 SDK 内容
+          echo "==> SDK directory structure:"
+          ls -la $HOME/ohos-sdk/ || true
+          find $HOME/ohos-sdk -maxdepth 2 -type d | head -30
+
+      # ═══ 5. 下载 ohpm CLI ═══
+      - name: 📦 Install ohpm CLI
+        if: steps.cache-sdk.outputs.cache-hit != 'true'
         run: |
-          echo "==> Installing root dependencies ..."
-          npm install --legacy-peer-deps 2>/dev/null || true
+          echo "==> Downloading ohpm CLI ${{ env.OHPM_VER }} ..."
+          mkdir -p $HOME/ohpm-cli
 
-          echo "==> Installing entry module dependencies ..."
-          cd entry && npm install --legacy-peer-deps 2>/dev/null || true && cd ..
+          OHPM_URL="https://repo.huaweicloud.com/openharmony/ohpm/${{ env.OHPM_VER }}/ohpm-linux-${{ env.OHPM_VER }}.zip"
+          echo "Trying: $OHPM_URL"
+          wget -q --timeout=60 --tries=3 "$OHPM_URL" -O /tmp/ohpm.zip && {
+            echo "✅ Downloaded ohpm from Huawei mirror"
+            unzip -q /tmp/ohpm.zip -d $HOME/ohpm-cli
+          } || {
+            echo "⚠️ ohpm download failed, will try npm @ohos/ohpm"
+          }
 
-          echo "==> Installing oh_modules (ohpm) ..."
-          ohpm install 2>/dev/null || npm run ohpm:install 2>/dev/null || true
+          # 设置 ohpm 可执行权限
+          find $HOME/ohpm-cli -name "ohpm" -type f -exec chmod +x {} \; 2>/dev/null || true
+          ls -la $HOME/ohpm-cli/ || true
 
-      # ── 6. 配置签名（如果提供了密钥） ──
-      - name: 🔑 Configure signing (optional)
-        if: ${{ env.OHOS_CERT_P12 != '' }}
-        env:
-          OHOS_CERT_P12: ${{ secrets.OHOS_CERT_P12 }}
-          OHOS_CERT_PASS: ${{ secrets.OHOS_CERT_PASS }}
-          OHOS_PROFILE: ${{ secrets.OHOS_PROFILE }}
+      # ═══ 6. 配置环境变量 ═══
+      - name: ⚙️ Configure environment
+        id: env-setup
         run: |
-          echo "==> Decoding signing materials ..."
-          mkdir -p signing
-          echo "$OHOS_CERT_P12" | base64 -d > signing/cert.p12
-          echo "$OHOS_PROFILE" | base64 -d > signing/profile.p7b
+          # 设置 SDK 路径
+          echo "OHOS_SDK_HOME=$HOME/ohos-sdk" >> $GITHUB_ENV
 
-          # 更新 build-profile.json5 中的签名配置
-          # 实际项目中需要根据你的证书信息修改
-          echo "Signing configured."
-
-      # ── 7. 构建 HAP ──
-      - name: 🏗️ Build HAP
-        run: |
-          echo "==> Building HAP package ..."
-          BUILD_TYPE="${{ github.event.inputs.build_type || 'debug' }}"
-          echo "Build type: $BUILD_TYPE"
-
-          # 尝试使用 hvigor 构建
-          npx hvigor assembleHap \
-            --mode ${BUILD_TYPE} \
-            -p module=entry@default \
-            --no-daemon \
-            2>&1 | tee build.log || true
-
-          # 如果 hvigor 不在 PATH 中，尝试其他方式
-          if [ ! -f "build.log" ] || ! grep -q "BUILD SUCCESSFUL" build.log 2>/dev/null; then
-            echo "==> hvigor build may have failed, trying npm script ..."
-            npm run build 2>/dev/null || true
+          # 查找 ohpm 可执行文件
+          OHPM_BIN=$(find $HOME/ohpm-cli -name "ohpm" -type f 2>/dev/null | head -1)
+          if [ -n "$OHPM_BIN" ]; then
+            echo "Found ohpm: $OHPM_BIN"
+            echo "OHPM_BIN=$OHPM_BIN" >> $GITHUB_ENV
+            $OHPM_BIN --version 2>/dev/null || echo "ohpm version check failed"
+          else
+            echo "ohpm CLI not found in cache, will use npm alternative"
           fi
 
-      # ── 8. 收集构建产物 ──
+          # 创建 local.properties 文件指向 SDK
+          echo "ohos.sdk.dir=$HOME/ohos-sdk" > local.properties
+          echo "nodejs.dir=$(which node | xargs dirname)" >> local.properties
+          echo "npm.dir=$(which npm | xargs dirname)" >> local.properties
+          cat local.properties
+
+          # 检查 SDK 内容完整性
+          HAS_SDK=false
+          if [ -d "$HOME/ohos-sdk/ets" ] || [ -d "$HOME/ohos-sdk/openharmony" ]; then
+            HAS_SDK=true
+          fi
+          echo "has_sdk=${HAS_SDK}" >> $GITHUB_OUTPUT
+          echo "SDK available: ${HAS_SDK}"
+
+      # ═══ 7. 安装项目依赖 ═══
+      - name: 📦 Install project dependencies
+        run: |
+          echo "==> Installing npm/hvigor dependencies ..."
+          npm install --legacy-peer-deps 2>&1 | tail -5 || true
+
+          echo "==> Installing entry module dependencies ..."
+          cd entry && npm install --legacy-peer-deps 2>&1 | tail -5 || true && cd ..
+
+          # 使用 ohpm 安装 oh_modules（如果有 ohpm CLI）
+          if [ -n "$OHPM_BIN" ]; then
+            echo "==> Installing oh_modules with ohpm ..."
+            $OHPM_BIN install 2>&1 | tail -10 || true
+            cd entry && $OHPM_BIN install 2>&1 | tail -5 || true && cd ..
+          else
+            echo "⚠️ ohpm not available, skipping oh_modules install"
+            echo "==> Trying npm-based ohpm wrapper ..."
+            npx ohpm install 2>/dev/null || true
+          fi
+
+      # ═══ 8. 构建 HAP（有 SDK 时） ═══
+      - name: 🏗️ Build HAP (with SDK)
+        if: steps.env-setup.outputs.has_sdk == 'true'
+        run: |
+          BUILD_TYPE="${{ github.event.inputs.build_type || 'debug' }}"
+          echo "==> Building HAP (type: ${BUILD_TYPE}) ..."
+
+          # 设置环境
+          export OHOS_SDK_HOME=$HOME/ohos-sdk
+          export OHPM_HOME=$HOME/ohpm-cli
+
+          # hvigorw 或 npx hvigor
+          if [ -f "hvigorw" ]; then
+            chmod +x hvigorw
+            ./hvigorw assembleHap --mode ${BUILD_TYPE} -p module=entry@default --no-daemon 2>&1 | tee build.log
+          else
+            npx hvigor assembleHap --mode ${BUILD_TYPE} -p module=entry@default --no-daemon 2>&1 | tee build.log
+          fi
+
+          echo "==> Build log tail:"
+          tail -20 build.log || true
+
+      # ═══ 9. 生成 hvigorw 包装脚本（无 SDK 时的备选） ═══
+      - name: 🔧 Generate hvigorw wrapper
+        run: |
+          if [ ! -f "hvigorw" ]; then
+            cat > hvigorw << 'WRAPPER'
+#!/bin/bash
+# hvigorw - Hvigor wrapper script for CI
+# Usage: ./hvigorw <command> [options]
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+export OHOS_SDK_HOME="${OHOS_SDK_HOME:-$SCRIPT_DIR/ohos-sdk}"
+
+# Try local node_modules first, then global
+if [ -f "$SCRIPT_DIR/node_modules/.bin/hvigor" ]; then
+  exec node "$SCRIPT_DIR/node_modules/.bin/hvigor" "$@"
+else
+  exec npx hvigor "$@"
+fi
+WRAPPER
+            chmod +x hvigorw
+            echo "Generated hvigorw wrapper"
+          fi
+
+      # ═══ 10. 收集构建产物 ═══
       - name: 📋 Collect build artifacts
         id: collect
         run: |
           echo "==> Searching for HAP files ..."
           mkdir -p output
 
-          # 搜索所有 .hap 文件
           found=0
           while IFS= read -r hap; do
             if [ -n "$hap" ]; then
-              echo "Found: $hap"
+              echo "✅ Found HAP: $hap"
               cp "$hap" output/
               found=1
             fi
           done < <(find . -name "*.hap" -not -path "*/oh_modules/*" -not -path "*/node_modules/*" 2>/dev/null)
 
           if [ "$found" -eq 0 ]; then
-            echo "⚠️ No HAP file found in build output"
+            echo "⚠️ No HAP found. Possible reasons:"
+            echo "  1. OpenHarmony SDK download failed (most likely)"
+            echo "  2. Build compilation errors"
+            echo "  3. hvigor not configured correctly"
             echo ""
-            echo "This is expected if the HarmonyOS SDK is not available in CI."
-            echo "You can build the HAP locally using DevEco Studio."
-            echo ""
-            echo "## 🔧 本地构建指南" > output/BUILD_GUIDE.md
-            echo "" >> output/BUILD_GUIDE.md
-            echo "### 方式一：DevEco Studio（推荐）" >> output/BUILD_GUIDE.md
-            echo "1. 下载 [DevEco Studio 5.0+](https://developer.huawei.com/consumer/cn/deveco-studio/)" >> output/BUILD_GUIDE.md
-            echo "2. 打开项目: File → Open → 选择项目根目录" >> output/BUILD_GUIDE.md
-            echo "3. 等待 SDK 下载和索引完成" >> output/BUILD_GUIDE.md
-            echo "4. Build → Build Hap(s)/APP(s) → Build Hap(s)" >> output/BUILD_GUIDE.md
-            echo "5. 输出: entry/build/default/outputs/default/entry-default-signed.hap" >> output/BUILD_GUIDE.md
-            echo "" >> output/BUILD_GUIDE.md
-            echo "### 方式二：命令行" >> output/BUILD_GUIDE.md
-            echo '```bash' >> output/BUILD_GUIDE.md
-            echo "# 安装依赖" >> output/BUILD_GUIDE.md
-            echo "ohpm install" >> output/BUILD_GUIDE.md
-            echo "" >> output/BUILD_GUIDE.md
-            echo "# 构建 Debug HAP" >> output/BUILD_GUIDE.md
-            echo "hvigor assembleHap --mode module -p module=entry@default" >> output/BUILD_GUIDE.md
-            echo "" >> output/BUILD_GUIDE.md
-            echo "# 构建 Release HAP" >> output/BUILD_GUIDE.md
-            echo "hvigor assembleHap --mode release -p module=entry@default" >> output/BUILD_GUIDE.md
-            echo '```' >> output/BUILD_GUIDE.md
-            echo "" >> output/BUILD_GUIDE.md
-            echo "### 安装到手机" >> output/BUILD_GUIDE.md
-            echo "1. 手机开启开发者模式: 设置 → 关于手机 → 连点版本号 7 次" >> output/BUILD_GUIDE.md
-            echo "2. 设置 → 系统与更新 → 开发者选项 → 开启 USB 调试" >> output/BUILD_GUIDE.md
-            echo "3. 用 DevEco Studio 直接运行到设备" >> output/BUILD_GUIDE.md
-            echo "   或将 .hap 文件通过 hdc 命令安装:" >> output/BUILD_GUIDE.md
-            echo '```bash' >> output/BUILD_GUIDE.md
-            echo "hdc install entry-default-signed.hap" >> output/BUILD_GUIDE.md
-            echo '```' >> output/BUILD_GUIDE.md
+
+            # 保存构建日志
+            if [ -f "build.log" ]; then
+              cp build.log output/
+              echo "Build log saved to output/build.log"
+            fi
+
+            # 保存详细说明
+            cat > output/README.md << 'GUIDE'
+# 🌿 Leaf Browser — 构建指南
+
+## CI 自动构建失败？
+
+由于 OpenHarmony SDK 下载源不稳定，CI 可能无法自动构建 HAP。
+请使用以下方式之一构建：
+
+## 方式一：DevEco Studio（推荐 ✅）
+
+1. 下载 [DevEco Studio 5.0+](https://developer.huawei.com/consumer/cn/deveco-studio/)
+2. 打开项目: File → Open → 选择项目根目录
+3. 等待 SDK 自动下载和索引完成
+4. 连接 Mate 80 手机（开启开发者模式 + USB 调试）
+5. 点击 ▶ Run 运行到设备
+
+## 方式二：本地命令行构建
+
+```bash
+# 1. 确保 DevEco Studio 已安装 SDK
+# 2. 在项目根目录执行：
+
+ohpm install
+hvigorw assembleHap --mode module -p module=entry@default
+
+# Release 构建：
+hvigorw assembleHap --mode release -p module=entry@default
+```
+
+HAP 输出路径: `entry/build/default/outputs/default/entry-default-signed.hap`
+
+## 方式三：手动安装 HAP 到 Mate 80
+
+```bash
+# 1. 开启开发者模式
+设置 → 关于手机 → 连点版本号 7 次
+
+# 2. 开启 USB 调试
+设置 → 系统与更新 → 开发者选项 → USB 调试
+
+# 3. 用 hdc 安装
+hdc install entry-default-signed.hap
+```
+
+## 方式四：修复 CI 构建
+
+在 GitHub 仓库 Settings → Secrets 中添加：
+
+| Secret | 说明 | 获取方式 |
+|--------|------|----------|
+| OHOS_SDK_ARCHIVE | SDK zip 的 base64 | 从 DevEco Studio 导出 |
+| OHOS_CERT_P12 | 签名证书 base64 | 华为开发者后台 |
+| OHOS_CERT_PASS | 证书密码 | 自己设定 |
+| OHOS_PROFILE | Profile base64 | 华为开发者后台 |
+GUIDE
           fi
 
           echo "found=${found}" >> $GITHUB_OUTPUT
 
-      # ── 9. 上传构建产物 ──
+      # ═══ 11. 上传构建产物 ═══
       - name: 📤 Upload artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -193,7 +317,7 @@ jobs:
           retention-days: 30
           if-no-files-found: warn
 
-      # ── 10. 构建摘要 ──
+      # ═══ 12. 构建摘要 ═══
       - name: 📊 Build summary
         if: always()
         run: |
@@ -203,18 +327,78 @@ jobs:
           echo "|------|-----|" >> $GITHUB_STEP_SUMMARY
           echo "| 触发分支 | \`${{ github.ref_name }}\` |" >> $GITHUB_STEP_SUMMARY
           echo "| 构建类型 | \`${{ github.event.inputs.build_type || 'debug' }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| SDK 版本 | \`${{ env.OHOS_SDK_VER }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| ohpm 版本 | \`${{ env.OHPM_VER }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Hvigor | \`${{ env.HVIGOR_VER }}\` |" >> $GITHUB_STEP_SUMMARY
           echo "| Node.js | \`${{ env.NODE_VERSION }}\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| Hvigor | \`${{ env.HVIGOR_VERSION }}\` |" >> $GITHUB_STEP_SUMMARY
           echo "| 时间 | $(date -u '+%Y-%m-%d %H:%M UTC') |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
 
           if [ "${{ steps.collect.outputs.found }}" = "1" ]; then
-            echo "✅ **HAP 文件已生成**，请在 Artifacts 中下载" >> $GITHUB_STEP_SUMMARY
-          else
-            echo "⚠️ **HAP 未生成** — CI 环境缺少 HarmonyOS SDK" >> $GITHUB_STEP_SUMMARY
+            echo "✅ **HAP 构建成功！** 在 Artifacts 中下载 \`LeafBrowser-HAP\`" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
-            echo "### 本地构建步骤" >> $GITHUB_STEP_SUMMARY
-            echo "1. 安装 [DevEco Studio](https://developer.huawei.com/consumer/cn/deveco-studio/)" >> $GITHUB_STEP_SUMMARY
+            echo "### 安装到 Mate 80" >> $GITHUB_STEP_SUMMARY
+            echo '```bash' >> $GITHUB_STEP_SUMMARY
+            echo "hdc install entry-default-signed.hap" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+          else
+            echo "❌ **HAP 构建失败** — SDK 下载或编译出错" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### 🔧 解决方案" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "**方案 A：本地 DevEco Studio 构建（最简单）**" >> $GITHUB_STEP_SUMMARY
+            echo "1. 下载 [DevEco Studio](https://developer.huawei.com/consumer/cn/deveco-studio/)" >> $GITHUB_STEP_SUMMARY
             echo "2. 打开本项目 → Build → Build Hap(s)" >> $GITHUB_STEP_SUMMARY
-            echo "3. HAP 输出目录: \`entry/build/default/outputs/default/\`" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "**方案 B：修复 CI（需要上传 SDK）**" >> $GITHUB_STEP_SUMMARY
+            echo "1. 从 DevEco Studio 导出 SDK: \`${HOME}/Huawei/Sdk/openharmony/\`" >> $GITHUB_STEP_SUMMARY
+            echo "2. 打包为 zip → base64 编码 → 存到 GitHub Secrets 的 \`OHOS_SDK_ARCHIVE\`" >> $GITHUB_STEP_SUMMARY
+            echo "3. 重新触发构建" >> $GITHUB_STEP_SUMMARY
           fi
+
+  # ═══ 备用方案：用开发者上传的 SDK 构建 ═══
+  build-with-custom-sdk:
+    runs-on: ubuntu-latest
+    if: ${{ github.event_name == 'workflow_dispatch' && secrets.OHOS_SDK_ARCHIVE != '' }}
+    needs: build-hap
+    permissions:
+      contents: read
+      actions: write
+
+    steps:
+      - name: 📥 Checkout repository
+        uses: actions/checkout@v4
+
+      - name: 🟢 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: 📦 Restore SDK from secrets
+        run: |
+          echo "==> Decoding custom SDK ..."
+          echo "${{ secrets.OHOS_SDK_ARCHIVE }}" | base64 -d > /tmp/ohos-sdk-custom.zip
+          mkdir -p $HOME/ohos-sdk
+          unzip -q /tmp/ohos-sdk-custom.zip -d $HOME/ohos-sdk
+
+          echo "ohos.sdk.dir=$HOME/ohos-sdk" > local.properties
+          echo "OHOS_SDK_HOME=$HOME/ohos-sdk" >> $GITHUB_ENV
+
+      - name: 📦 Install dependencies
+        run: |
+          npm install --legacy-peer-deps
+          cd entry && npm install --legacy-peer-deps && cd ..
+
+      - name: 🏗️ Build HAP with custom SDK
+        run: |
+          npx hvigor assembleHap --mode debug -p module=entry@default --no-daemon 2>&1 | tee build.log
+
+      - name: 📤 Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: LeafBrowser-HAP-signed
+          path: |
+            entry/build/default/outputs/default/*.hap
+            build.log
+          retention-days: 30
+          if-no-files-found: warn

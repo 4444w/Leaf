@@ -1,0 +1,46 @@
+#!/bin/bash
+# ═══════════════════════════════════════════════════
+#  hvigorw — Hvigor 构建工具包装脚本
+#  用于在没有 DevEco Studio 的环境中构建 HarmonyOS 项目
+#
+#  用法：
+#    ./hvigorw assembleHap              # 构建 Debug HAP
+#    ./hvigorw assembleHap --mode release  # 构建 Release HAP
+#    ./hvigorw clean                    # 清理构建产物
+# ═══════════════════════════════════════════════════
+
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+# ── 环境变量 ──────────────────────────────────
+# SDK 路径：优先使用环境变量，其次读取 local.properties
+if [ -z "$OHOS_SDK_HOME" ]; then
+  if [ -f "$SCRIPT_DIR/local.properties" ]; then
+    OHOS_SDK_HOME=$(grep "ohos.sdk.dir" "$SCRIPT_DIR/local.properties" | cut -d'=' -f2 | tr -d ' ')
+  fi
+  export OHOS_SDK_HOME="${OHOS_SDK_HOME:-$SCRIPT_DIR/ohos-sdk}"
+fi
+
+echo "[hvigorw] OHOS_SDK_HOME=$OHOS_SDK_HOME"
+
+# ── 查找 hvigor ──────────────────────────────
+HVIGOR=""
+if [ -f "$SCRIPT_DIR/node_modules/.bin/hvigor" ]; then
+  HVIGOR="$SCRIPT_DIR/node_modules/.bin/hvigor"
+elif command -v hvigor &> /dev/null; then
+  HVIGOR="hvigor"
+elif command -v npx &> /dev/null; then
+  HVIGOR="npx hvigor"
+fi
+
+if [ -z "$HVIGOR" ]; then
+  echo "[hvigorw] ❌ hvigor not found. Run: npm install @ohos/hvigor @ohos/hvigor-ohos-plugin"
+  exit 1
+fi
+
+echo "[hvigorw] Using: $HVIGOR"
+echo "[hvigorw] Args: $@"
+
+# ── 执行构建 ──────────────────────────────────
+exec $HVIGOR "$@"
