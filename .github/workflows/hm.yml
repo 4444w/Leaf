@@ -33,11 +33,14 @@ jobs:
             echo "Init script not found, performing manual initialization..."
             mkdir -p $HOME/.ohpm
             echo "initialized" > $HOME/.ohpm/.ohpm_init_flag
-            echo "registry=https://ohpm.openharmony.cn/ohpm/" > $HOME/.ohpm/ohpmrc
+            # 核心修改：配置正确的鸿蒙商业版仓库源
+            cat > $HOME/.ohpm/ohpmrc <<EOF
+            registry=https://ohpm.harmonyos.cn/ohpm/
+            @ohos:registry=https://ohpm.harmonyos.cn/ohpm/
+            EOF
           fi
           
       - name: Install Dependencies
-        # 修复点：移除了 --all 参数
         run: ohpm install
         
       - name: Build Phone HAP
