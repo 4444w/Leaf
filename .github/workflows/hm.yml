@@ -227,28 +227,38 @@ jobs:
 
           echo "has_sdk=${HAS_SDK}" >> $GITHUB_OUTPUT
 
-      # ── 6. 安装依赖 ──
+      # ── 6. 安装依赖 (使用 ohpm 代替 npm) ──
       - name: 📦 Install dependencies
         if: steps.env.outputs.has_sdk == 'true'
         run: |
-          echo "==> npm install ..."
-          npm install --legacy-peer-deps 2>&1 | tail -10
-
-          echo "==> entry npm install ..."
-          cd entry && npm install --legacy-peer-deps 2>&1 | tail -5 && cd ..
-
-          # 查找并运行 ohpm（如果 SDK 中包含）
-          OHPM_BIN=$(find "$HOME/ohos-sdk" -name "ohpm" -type f 2>/dev/null | head -1)
-          if [ -n "$OHPM_BIN" ]; then
-            chmod +x "$OHPM_BIN"
-            echo "==> ohpm install ..."
-            $OHPM_BIN install 2>&1 | tail -10 || true
-            cd entry && $OHPM_BIN install 2>&1 | tail -5 || true && cd ..
-          else
-            echo "ohpm 未在 SDK 中找到，跳过"
+          # 查找 ohpm 可执行文件
+          OHPM_BIN=$(find "$HOME/ohos-sdk" -name "ohpm" -type f 2>/dev/null | grep -E "bin/ohpm$" | head -1)
+          
+          if [ -z "$OHPM_BIN" ]; then
+            echo "❌ 未在 SDK 中找到 ohpm 工具！"
+            echo "请确认打包的 SDK 中是否包含 toolchains/ohpm 目录"
+            exit 1
+          fi
+          
+          chmod +x "$OHPM_BIN"
+          OHPM_DIR=$(dirname $(dirname "$OHPM_BIN"))
+          echo "✅ 找到 ohpm: $OHPM_BIN"
+          
+          # 设置 OHPM 环境变量，后续构建也需要
+          echo "OHPM_HOME=$OHPM_DIR" >> $GITHUB_ENV
+          echo "PATH=$OHPM_DIR/bin:$PATH" >> $GITHUB_ENV
+          
+          # 根目录安装依赖
+          echo "==> 根目录 ohpm install ..."
+          "$OHPM_BIN" install --all 2>&1 | tail -20
+          
+          # entry 模块安装依赖
+          if [ -d "entry" ]; then
+            echo "==> entry 模块 ohpm install ..."
+            cd entry && "$OHPM_BIN" install 2>&1 | tail -10 && cd ..
           fi
 
-      # ── 7. 构建 HAP ──
+      # ── 7. 构建 HAP (使用 hvigorw 代替 npx hvigor) ──
       - name: 🏗️ Build HAP
         if: steps.env.outputs.has_sdk == 'true'
         id: build
@@ -257,12 +267,11 @@ jobs:
           echo "==> 构建 HAP (type: ${BUILD_TYPE}) ..."
 
           # 确保 hvigorw 可执行
-          [ -f "hvigorw" ] && chmod +x hvigorw || true
+          chmod +x hvigorw
 
-          # 执行构建
-          npx hvigor assembleHap \
-            --mode ${BUILD_TYPE} \
-            -p module=entry@default \
+          # 执行构建 (使用 ./hvigorw 而不是 npx hvigor)
+          ./hvigorw assembleHap \
+            --mode module -p module=entry@default \
             --no-daemon \
             2>&1 | tee build.log || true
 
@@ -270,14 +279,14 @@ jobs:
           if grep -q "BUILD SUCCESSFUL" build.log 2>/dev/null; then
             echo "✅ 构建成功"
             echo "success=true" >> $GITHUB_OUTPUT
-          elif find . -name "*.hap" -not -path "*/node_modules/*" | grep -q .; then
+          elif find . -name "*.hap" -not -path "*/node_modules/*" -not -path "*/oh_modules/*" | grep -q .; then
             echo "✅ 找到 HAP 文件（构建可能成功）"
             echo "success=true" >> $GITHUB_OUTPUT
           else
             echo "❌ 构建失败"
             echo ""
-            echo "=== 构建日志最后 40 行 ==="
-            tail -40 build.log || true
+            echo "=== 构建日志最后 50 行 ==="
+            tail -50 build.log || true
             echo "success=false" >> $GITHUB_OUTPUT
           fi
 
