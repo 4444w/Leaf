@@ -19,16 +19,15 @@ jobs:
           npm install -g @tarojs/cli
           npm install
           
-      # 修复点1：使用正确的官方 Action 名称
+      # 修改点：将 @v1 改为 @main
       - name: Setup HarmonyOS SDK
-        uses: harmonyos-dev/setup-harmonyos-sdk@v1
+        uses: harmonyos-dev/setup-harmonyos-sdk@main
         
       - name: Build Phone HAP
         run: |
           taro build --type harmony --platform phone
           zip -r phone-unsigned.zip dist/
           
-      # 修复点2：升级 upload-artifact 到 v4
       - name: Upload HAP Artifact
         uses: actions/upload-artifact@v4
         with:
