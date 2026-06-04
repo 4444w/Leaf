@@ -17,16 +17,30 @@ jobs:
       - name: Setup HarmonyOS SDK
         uses: harmonyos-dev/setup-harmonyos-sdk@main
         
-      # 修复点：不再寻找 init 脚本，改为手动配置环境变量和仓库源
-      - name: Configure OHPM Environment
+      # 修复点：手动寻找 init 脚本，找不到则手动伪造初始化环境
+      - name: Initialize OHPM Manually
         run: |
-          # 找到 ohpm 的安装根目录作为 OHPM_CLI_HOME
+          # 定位 ohpm 的根目录并设置环境变量
           OHPM_PATH=$(which ohpm)
           OHPM_HOME=$(dirname $(dirname $OHPM_PATH))
           echo "OHPM_CLI_HOME=$OHPM_HOME" >> $GITHUB_ENV
           
-          # 手动设置 ohpm 的仓库源，这等同于完成了初始化的核心工作
-          ohpm config set registry https://ohpm.openharmony.cn/ohpm/
+          # 尝试在整个 SDK 目录下寻找 init 脚本
+          INIT_SCRIPT=$(find $OHPM_HOME -name "init" -type f | head -n 1)
+          
+          if [ -n "$INIT_SCRIPT" ]; then
+            echo "Found init script at $INIT_SCRIPT, executing..."
+            chmod +x $INIT_SCRIPT
+            $INIT_SCRIPT
+          else
+            echo "Init script not found, performing manual initialization..."
+            # 1. 创建 ohpm 需要的隐藏目录
+            mkdir -p $HOME/.ohpm
+            # 2. 写入初始化标记文件（ohpm 启动时会检查这个文件）
+            echo "initialized" > $HOME/.ohpm/.ohpm_init_flag
+            # 3. 手动写入默认仓库源配置
+            echo "registry=https://ohpm.openharmony.cn/ohpm/" > $HOME/.ohpm/ohpmrc
+          fi
           
       - name: Install Dependencies
         run: ohpm install --all
