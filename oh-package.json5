@@ -1,0 +1,9 @@
+{
+  "name": "leafbrowser",
+  "version": "1.0.0",
+  "description": "Leaf Browser - A lightweight browser for HarmonyOS NEXT",
+  "main": "",
+  "author": "Leaf",
+  "license": "MIT",
+  "dependencies": {}
+}

@@ -1,0 +1,7 @@
+{
+  "string": [
+    { "name": "module_desc", "value": "Leaf Browser" },
+    { "name": "ability_desc", "value": "Leaf Browser main ability" },
+    { "name": "ability_label", "value": "Leaf Browser" }
+  ]
+}

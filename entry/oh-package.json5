@@ -1,0 +1,9 @@
+{
+  "name": "entry",
+  "version": "1.0.0",
+  "description": "Leaf Browser main module",
+  "main": "",
+  "author": "Leaf",
+  "license": "MIT",
+  "dependencies": {}
+}

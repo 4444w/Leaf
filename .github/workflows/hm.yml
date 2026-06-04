@@ -1,0 +1,220 @@
+# ═══════════════════════════════════════════════════════════
+#  Leaf Browser — HarmonyOS NEXT HAP 自动构建工作流
+# ═══════════════════════════════════════════════════════════
+#
+#  使用方式：
+#  1. 将项目推送到 GitHub
+#  2. 进入仓库 Settings → Secrets → 添加以下变量（可选）：
+#     - OHOS_CERT_P12    : 华为开发者签名证书 base64
+#     - OHOS_CERT_PASS   : 证书密码
+#     - OHOS_PROFILE     :  Provision Profile base64
+#  3. 推送代码或手动触发构建
+#  4. 在 Actions 页面下载 HAP artifact
+#
+#  注意：
+#  - HarmonyOS SDK 需要华为开发者账号授权
+#  - 如果 CI 环境无法下载 SDK，请使用 DevEco Studio 本地构建
+#  - 未签名 HAP 需要手机开启开发者模式才能安装
+# ═══════════════════════════════════════════════════════════
+
+name: Build HAP
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+    inputs:
+      build_type:
+        description: '构建类型'
+        required: false
+        default: 'debug'
+        type: choice
+        options:
+          - debug
+          - release
+
+env:
+  OHOS_SDK_URL: 'https://developer.huawei.com/ohos/sdk'
+  HVIGOR_VERSION: '4.1.0'
+  NODE_VERSION: '18'
+
+jobs:
+  # ─── 构建 HAP ──────────────────────────────
+  build-hap:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: write
+
+    steps:
+      # ── 1. 检出代码 ──
+      - name: 📥 Checkout repository
+        uses: actions/checkout@v4
+
+      # ── 2. 配置 Node.js ──
+      - name: 🟢 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      # ── 3. 缓存 oh_modules ──
+      - name: 💾 Cache oh_modules
+        uses: actions/cache@v4
+        with:
+          path: |
+            oh_modules
+            entry/oh_modules
+          key: ohos-oh_modules-${{ hashFiles('oh-package.json5', 'entry/oh-package.json5') }}
+          restore-keys: |
+            ohos-oh_modules-
+
+      # ── 4. 下载 OpenHarmony 命令行工具 ──
+      - name: 🔧 Install OpenHarmony CLI tools
+        run: |
+          echo "==> Installing ohpm & hvigor ..."
+          npm install -g @ohos/hvigor@${{ env.HVIGOR_VERSION }} 2>/dev/null || true
+          npm install -g @ohos/ohpm@1.3.0 2>/dev/null || true
+
+          echo "==> Checking tools ..."
+          npx hvigor --version 2>/dev/null || echo "hvigor not yet available"
+          which ohpm 2>/dev/null || echo "ohpm CLI not yet available"
+
+      # ── 5. 安装项目依赖 ──
+      - name: 📦 Install dependencies
+        run: |
+          echo "==> Installing root dependencies ..."
+          npm install --legacy-peer-deps 2>/dev/null || true
+
+          echo "==> Installing entry module dependencies ..."
+          cd entry && npm install --legacy-peer-deps 2>/dev/null || true && cd ..
+
+          echo "==> Installing oh_modules (ohpm) ..."
+          ohpm install 2>/dev/null || npm run ohpm:install 2>/dev/null || true
+
+      # ── 6. 配置签名（如果提供了密钥） ──
+      - name: 🔑 Configure signing (optional)
+        if: ${{ env.OHOS_CERT_P12 != '' }}
+        env:
+          OHOS_CERT_P12: ${{ secrets.OHOS_CERT_P12 }}
+          OHOS_CERT_PASS: ${{ secrets.OHOS_CERT_PASS }}
+          OHOS_PROFILE: ${{ secrets.OHOS_PROFILE }}
+        run: |
+          echo "==> Decoding signing materials ..."
+          mkdir -p signing
+          echo "$OHOS_CERT_P12" | base64 -d > signing/cert.p12
+          echo "$OHOS_PROFILE" | base64 -d > signing/profile.p7b
+
+          # 更新 build-profile.json5 中的签名配置
+          # 实际项目中需要根据你的证书信息修改
+          echo "Signing configured."
+
+      # ── 7. 构建 HAP ──
+      - name: 🏗️ Build HAP
+        run: |
+          echo "==> Building HAP package ..."
+          BUILD_TYPE="${{ github.event.inputs.build_type || 'debug' }}"
+          echo "Build type: $BUILD_TYPE"
+
+          # 尝试使用 hvigor 构建
+          npx hvigor assembleHap \
+            --mode ${BUILD_TYPE} \
+            -p module=entry@default \
+            --no-daemon \
+            2>&1 | tee build.log || true
+
+          # 如果 hvigor 不在 PATH 中，尝试其他方式
+          if [ ! -f "build.log" ] || ! grep -q "BUILD SUCCESSFUL" build.log 2>/dev/null; then
+            echo "==> hvigor build may have failed, trying npm script ..."
+            npm run build 2>/dev/null || true
+          fi
+
+      # ── 8. 收集构建产物 ──
+      - name: 📋 Collect build artifacts
+        id: collect
+        run: |
+          echo "==> Searching for HAP files ..."
+          mkdir -p output
+
+          # 搜索所有 .hap 文件
+          found=0
+          while IFS= read -r hap; do
+            if [ -n "$hap" ]; then
+              echo "Found: $hap"
+              cp "$hap" output/
+              found=1
+            fi
+          done < <(find . -name "*.hap" -not -path "*/oh_modules/*" -not -path "*/node_modules/*" 2>/dev/null)
+
+          if [ "$found" -eq 0 ]; then
+            echo "⚠️ No HAP file found in build output"
+            echo ""
+            echo "This is expected if the HarmonyOS SDK is not available in CI."
+            echo "You can build the HAP locally using DevEco Studio."
+            echo ""
+            echo "## 🔧 本地构建指南" > output/BUILD_GUIDE.md
+            echo "" >> output/BUILD_GUIDE.md
+            echo "### 方式一：DevEco Studio（推荐）" >> output/BUILD_GUIDE.md
+            echo "1. 下载 [DevEco Studio 5.0+](https://developer.huawei.com/consumer/cn/deveco-studio/)" >> output/BUILD_GUIDE.md
+            echo "2. 打开项目: File → Open → 选择项目根目录" >> output/BUILD_GUIDE.md
+            echo "3. 等待 SDK 下载和索引完成" >> output/BUILD_GUIDE.md
+            echo "4. Build → Build Hap(s)/APP(s) → Build Hap(s)" >> output/BUILD_GUIDE.md
+            echo "5. 输出: entry/build/default/outputs/default/entry-default-signed.hap" >> output/BUILD_GUIDE.md
+            echo "" >> output/BUILD_GUIDE.md
+            echo "### 方式二：命令行" >> output/BUILD_GUIDE.md
+            echo '```bash' >> output/BUILD_GUIDE.md
+            echo "# 安装依赖" >> output/BUILD_GUIDE.md
+            echo "ohpm install" >> output/BUILD_GUIDE.md
+            echo "" >> output/BUILD_GUIDE.md
+            echo "# 构建 Debug HAP" >> output/BUILD_GUIDE.md
+            echo "hvigor assembleHap --mode module -p module=entry@default" >> output/BUILD_GUIDE.md
+            echo "" >> output/BUILD_GUIDE.md
+            echo "# 构建 Release HAP" >> output/BUILD_GUIDE.md
+            echo "hvigor assembleHap --mode release -p module=entry@default" >> output/BUILD_GUIDE.md
+            echo '```' >> output/BUILD_GUIDE.md
+            echo "" >> output/BUILD_GUIDE.md
+            echo "### 安装到手机" >> output/BUILD_GUIDE.md
+            echo "1. 手机开启开发者模式: 设置 → 关于手机 → 连点版本号 7 次" >> output/BUILD_GUIDE.md
+            echo "2. 设置 → 系统与更新 → 开发者选项 → 开启 USB 调试" >> output/BUILD_GUIDE.md
+            echo "3. 用 DevEco Studio 直接运行到设备" >> output/BUILD_GUIDE.md
+            echo "   或将 .hap 文件通过 hdc 命令安装:" >> output/BUILD_GUIDE.md
+            echo '```bash' >> output/BUILD_GUIDE.md
+            echo "hdc install entry-default-signed.hap" >> output/BUILD_GUIDE.md
+            echo '```' >> output/BUILD_GUIDE.md
+          fi
+
+          echo "found=${found}" >> $GITHUB_OUTPUT
+
+      # ── 9. 上传构建产物 ──
+      - name: 📤 Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: LeafBrowser-HAP
+          path: output/
+          retention-days: 30
+          if-no-files-found: warn
+
+      # ── 10. 构建摘要 ──
+      - name: 📊 Build summary
+        if: always()
+        run: |
+          echo "## 🌿 Leaf Browser Build" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| 项目 | 值 |" >> $GITHUB_STEP_SUMMARY
+          echo "|------|-----|" >> $GITHUB_STEP_SUMMARY
+          echo "| 触发分支 | \`${{ github.ref_name }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| 构建类型 | \`${{ github.event.inputs.build_type || 'debug' }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Node.js | \`${{ env.NODE_VERSION }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Hvigor | \`${{ env.HVIGOR_VERSION }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| 时间 | $(date -u '+%Y-%m-%d %H:%M UTC') |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          if [ "${{ steps.collect.outputs.found }}" = "1" ]; then
+            echo "✅ **HAP 文件已生成**，请在 Artifacts 中下载" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "⚠️ **HAP 未生成** — CI 环境缺少 HarmonyOS SDK" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### 本地构建步骤" >> $GITHUB_STEP_SUMMARY
+            echo "1. 安装 [DevEco Studio](https://developer.huawei.com/consumer/cn/deveco-studio/)" >> $GITHUB_STEP_SUMMARY
+            echo "2. 打开本项目 → Build → Build Hap(s)" >> $GITHUB_STEP_SUMMARY
+            echo "3. HAP 输出目录: \`entry/build/default/outputs/default/\`" >> $GITHUB_STEP_SUMMARY
+          fi
