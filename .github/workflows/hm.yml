@@ -68,12 +68,12 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
 
       # ── 3. 缓存 SDK（避免每次重复下载 2-3GB） ──
-      - name: 💾 Cache SDK
-        uses: actions/cache@v4
-        id: cache-sdk
-        with:
-          path: ~/ohos-sdk
-          key: ohos-sdk-v3-${{ env.SDK_RELEASE_TAG }}
+      #- name: 💾 Cache SDK
+      #  uses: actions/cache@v4
+      #  id: cache-sdk
+      #  with:
+      #    path: ~/ohos-sdk
+      #    key: ohos-sdk-v3-${{ env.SDK_RELEASE_TAG }}
 
       # ── 4. 从 GitHub Release 下载 SDK ──
       - name: 📦 Download SDK from Release
