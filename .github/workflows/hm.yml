@@ -17,27 +17,16 @@ jobs:
       - name: Setup HarmonyOS SDK
         uses: harmonyos-dev/setup-harmonyos-sdk@main
         
-      - name: Initialize OHPM Manually
+      - name: Initialize OHPM and Configure Registry
         run: |
-          OHPM_PATH=$(which ohpm)
-          OHPM_HOME=$(dirname $(dirname $OHPM_PATH))
-          echo "OHPM_CLI_HOME=$OHPM_HOME" >> $GITHUB_ENV
+          # 1. 绕过 ohpm 初始化检查（创建标记文件）
+          mkdir -p $HOME/.ohpm
+          echo "initialized" > $HOME/.ohpm/.ohpm_init_flag
           
-          INIT_SCRIPT=$(find $OHPM_HOME -name "init" -type f | head -n 1)
-          
-          if [ -n "$INIT_SCRIPT" ]; then
-            echo "Found init script at $INIT_SCRIPT, executing..."
-            chmod +x $INIT_SCRIPT
-            $INIT_SCRIPT
-          else
-            echo "Init script not found, performing manual initialization..."
-            mkdir -p $HOME/.ohpm
-            echo "initialized" > $HOME/.ohpm/.ohpm_init_flag
-            
-            # 修复语法错误：使用 echo 替代 cat <<EOF 避免缩进问题
-            echo "registry=https://ohpm.harmonyos.cn/ohpm/" > $HOME/.ohpm/ohpmrc
-            echo "@ohos:registry=https://ohpm.harmonyos.cn/ohpm/" >> $HOME/.ohpm/ohpmrc
-          fi
+          # 2. 核心修复：在项目根目录生成 .ohpmrc 文件，强制指定商业版仓库
+          # 这样无论 ohpm 去哪找配置，都会以项目目录下的为准
+          echo "registry=https://ohpm.harmonyos.cn/ohpm/" > .ohpmrc
+          echo "@ohos:registry=https://ohpm.harmonyos.cn/ohpm/" >> .ohpmrc
           
       - name: Install Dependencies
         run: ohpm install
