@@ -33,11 +33,10 @@ jobs:
             echo "Init script not found, performing manual initialization..."
             mkdir -p $HOME/.ohpm
             echo "initialized" > $HOME/.ohpm/.ohpm_init_flag
-            # 核心修改：配置正确的鸿蒙商业版仓库源
-            cat > $HOME/.ohpm/ohpmrc <<EOF
-            registry=https://ohpm.harmonyos.cn/ohpm/
-            @ohos:registry=https://ohpm.harmonyos.cn/ohpm/
-            EOF
+            
+            # 修复语法错误：使用 echo 替代 cat <<EOF 避免缩进问题
+            echo "registry=https://ohpm.harmonyos.cn/ohpm/" > $HOME/.ohpm/ohpmrc
+            echo "@ohos:registry=https://ohpm.harmonyos.cn/ohpm/" >> $HOME/.ohpm/ohpmrc
           fi
           
       - name: Install Dependencies
