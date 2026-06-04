@@ -17,15 +17,12 @@ jobs:
       - name: Setup HarmonyOS SDK
         uses: harmonyos-dev/setup-harmonyos-sdk@main
         
-      # 修复点：手动寻找 init 脚本，找不到则手动伪造初始化环境
       - name: Initialize OHPM Manually
         run: |
-          # 定位 ohpm 的根目录并设置环境变量
           OHPM_PATH=$(which ohpm)
           OHPM_HOME=$(dirname $(dirname $OHPM_PATH))
           echo "OHPM_CLI_HOME=$OHPM_HOME" >> $GITHUB_ENV
           
-          # 尝试在整个 SDK 目录下寻找 init 脚本
           INIT_SCRIPT=$(find $OHPM_HOME -name "init" -type f | head -n 1)
           
           if [ -n "$INIT_SCRIPT" ]; then
@@ -34,16 +31,14 @@ jobs:
             $INIT_SCRIPT
           else
             echo "Init script not found, performing manual initialization..."
-            # 1. 创建 ohpm 需要的隐藏目录
             mkdir -p $HOME/.ohpm
-            # 2. 写入初始化标记文件（ohpm 启动时会检查这个文件）
             echo "initialized" > $HOME/.ohpm/.ohpm_init_flag
-            # 3. 手动写入默认仓库源配置
             echo "registry=https://ohpm.openharmony.cn/ohpm/" > $HOME/.ohpm/ohpmrc
           fi
           
       - name: Install Dependencies
-        run: ohpm install --all
+        # 修复点：移除了 --all 参数
+        run: ohpm install
         
       - name: Build Phone HAP
         run: |
