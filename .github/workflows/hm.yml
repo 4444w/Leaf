@@ -9,31 +9,23 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       
-      - name: Setup HarmonyOS Environment
-        run: |
-          # 下载鸿蒙命令行工具
-          wget -q https://repo.huaweicloud.com/harmonyos/commandline-tools/commandline-tools-linux.zip -O clt.zip
-          unzip -q clt.zip -d commandline-tools
-          
-          # 将 ohpm 和 hvigor 添加到环境变量
-          echo "$PWD/commandline-tools/bin" >> $GITHUB_PATH
-          echo "$PWD/commandline-tools/hvigor/bin" >> $GITHUB_PATH
-          
-          # 配置环境变量供构建使用
-          echo "OHPM_CLI_HOME=$PWD/commandline-tools" >> $GITHUB_ENV
-          echo "HVIGOR_APP_HOME=$PWD" >> $GITHUB_ENV
-          
+      # 1. 使用官方 Action 的 main 分支来配置 SDK 和 ohpm 环境
+      - name: Setup HarmonyOS SDK
+        uses: harmonyos-dev/setup-harmonyos-sdk@main
+        
       - name: Install Dependencies
-        # 原生鸿蒙项目使用 ohpm 安装依赖
+        # 使用 ohpm 安装项目依赖
         run: ohpm install --all
         
       - name: Build Phone HAP
-        # 使用 hvigorw 构建未签名的 HAP 包
-        run: hvigorw assembleHap --mode module -p module=entry@default --no-daemon
+        # 注意这里使用 ./hvigorw 而不是 hvigorw，并先赋予执行权限
+        run: |
+          chmod +x hvigorw
+          ./hvigorw assembleHap --mode module -p module=entry@default --no-daemon
         
       - name: Upload HAP Artifact
         uses: actions/upload-artifact@v4
         with:
           name: phone-hap-unsigned
-          # 原生项目构建后的未签名 HAP 默认路径通常在此
+          # 原生项目构建后的未签名 HAP 默认路径
           path: entry/build/default/outputs/default/entry-default-unsigned.hap
