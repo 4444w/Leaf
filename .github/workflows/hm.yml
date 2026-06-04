@@ -1,4 +1,4 @@
-name: HarmonyOS Phone Build
+name: HarmonyOS Phone Build (Manual SDK)
 
 on: [push]
 
@@ -19,10 +19,20 @@ jobs:
           npm install -g @tarojs/cli
           npm install
           
-      # 修改点：将 @v1 改为 @main
-      - name: Setup HarmonyOS SDK
-        uses: harmonyos-dev/setup-harmonyos-sdk@main
-        
+      # 替代方案：手动下载并配置 HarmonyOS SDK 和 ohpm
+      - name: Setup HarmonyOS Environment
+        run: |
+          # 下载 commandline-tools (请根据华为官方最新链接替换此URL)
+          wget -q https://repo.huaweicloud.com/harmonyos/commandline-tools/commandline-tools-linux.zip -O commandline-tools.zip
+          unzip -q commandline-tools.zip -d commandline-tools
+          
+          # 将 ohpm 和 hvigor 添加到环境变量
+          echo "$PWD/commandline-tools/bin" >> $GITHUB_PATH
+          echo "$PWD/commandline-tools/hvigor/bin" >> $GITHUB_PATH
+          
+          # 配置环境变量供后续构建使用
+          echo "HARMONYOS_SDK_HOME=$PWD/commandline-tools" >> $GITHUB_ENV
+          
       - name: Build Phone HAP
         run: |
           taro build --type harmony --platform phone
