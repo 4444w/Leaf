@@ -9,13 +9,24 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       
+      # hvigorw 构建脚本依赖于 Node.js 环境
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          
       - name: Setup HarmonyOS SDK
         uses: harmonyos-dev/setup-harmonyos-sdk@main
         
-      # 新增：初始化 ohpm 环境
+      # 修复点：找到 ohpm 的安装目录，并运行其自带的 init 脚本
       - name: Initialize OHPM
-        run: ohpm init
-        
+        run: |
+          OHPM_PATH=$(which ohpm)
+          OHPM_BIN_DIR=$(dirname $OHPM_PATH)
+          echo "OHPM located at: $OHPM_PATH"
+          echo "Executing init script at: $OHPM_BIN_DIR/init"
+          $OHPM_BIN_DIR/init
+          
       - name: Install Dependencies
         run: ohpm install --all
         
