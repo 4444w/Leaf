@@ -9,16 +9,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       
-      # 1. 使用官方 Action 的 main 分支来配置 SDK 和 ohpm 环境
       - name: Setup HarmonyOS SDK
         uses: harmonyos-dev/setup-harmonyos-sdk@main
         
+      # 新增：初始化 ohpm 环境
+      - name: Initialize OHPM
+        run: ohpm init
+        
       - name: Install Dependencies
-        # 使用 ohpm 安装项目依赖
         run: ohpm install --all
         
       - name: Build Phone HAP
-        # 注意这里使用 ./hvigorw 而不是 hvigorw，并先赋予执行权限
         run: |
           chmod +x hvigorw
           ./hvigorw assembleHap --mode module -p module=entry@default --no-daemon
