@@ -9,7 +9,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       
-      # hvigorw 构建脚本依赖于 Node.js 环境
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
@@ -18,14 +17,16 @@ jobs:
       - name: Setup HarmonyOS SDK
         uses: harmonyos-dev/setup-harmonyos-sdk@main
         
-      # 修复点：找到 ohpm 的安装目录，并运行其自带的 init 脚本
-      - name: Initialize OHPM
+      # 修复点：不再寻找 init 脚本，改为手动配置环境变量和仓库源
+      - name: Configure OHPM Environment
         run: |
+          # 找到 ohpm 的安装根目录作为 OHPM_CLI_HOME
           OHPM_PATH=$(which ohpm)
-          OHPM_BIN_DIR=$(dirname $OHPM_PATH)
-          echo "OHPM located at: $OHPM_PATH"
-          echo "Executing init script at: $OHPM_BIN_DIR/init"
-          $OHPM_BIN_DIR/init
+          OHPM_HOME=$(dirname $(dirname $OHPM_PATH))
+          echo "OHPM_CLI_HOME=$OHPM_HOME" >> $GITHUB_ENV
+          
+          # 手动设置 ohpm 的仓库源，这等同于完成了初始化的核心工作
+          ohpm config set registry https://ohpm.openharmony.cn/ohpm/
           
       - name: Install Dependencies
         run: ohpm install --all
@@ -39,5 +40,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: phone-hap-unsigned
-          # 原生项目构建后的未签名 HAP 默认路径
           path: entry/build/default/outputs/default/entry-default-unsigned.hap
